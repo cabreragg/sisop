@@ -16,6 +16,7 @@ Número de entrega: primera reentrega.
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <libgen.h>
 #include <netdb.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -23,13 +24,17 @@ Número de entrega: primera reentrega.
 #include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "../constants.h"
 
 void printHelp();
 void * handleConnection(void *);
-int crearMulta(int, char *, char *);
+void crearMulta(int, char *, char *);
+void listarRegistrosSuspender(int, char *);
+
+char outdir[256];
 
 int main(int argc, char *argv[]) {
 
@@ -54,6 +59,12 @@ int main(int argc, char *argv[]) {
 
     int se;
     struct addrinfo hints, *addrs;
+    char * dname;
+
+    dname = dirname(argv[0]);
+
+    snprintf(outdir, 256, "%s%s", dname, "/data/");
+    mkdir(outdir, 0700);
 
     memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_INET;
@@ -119,7 +130,7 @@ int main(int argc, char *argv[]) {
 
 void * handleConnection(void * socket_desc) {
 
-    int sc = *(int * )socket_desc;
+    int sc = *(int *)socket_desc;
     int read_size = 0, written_size = 0;
     char * message, partido[100], client_message[2000];
 
@@ -127,7 +138,7 @@ void * handleConnection(void * socket_desc) {
 
     partido[read_size] = '\0';
 
-    message = "\nBIENVENIDO AL SISTEMA DE MULTAS DE LA PROVINCIA DE BUENOS AIRES!\n\n\nEl partido ingresado es: ";
+    message = "BIENVENIDO AL SISTEMA DE MULTAS DE LA PROVINCIA DE BUENOS AIRES!\n\n\nEl partido ingresado es: ";
     
     memset(client_message, 0, sizeof(client_message));
     strcat(client_message, message);
@@ -141,7 +152,7 @@ void * handleConnection(void * socket_desc) {
 
         char *p, *t, *opcode;
         
-        opcode = strtok_r(client_message, " ", &t);
+        opcode = strtok_r(client_message, TOKEN, &t);
         long opcode_l = strtol(opcode, &p, 10);
         
         switch(opcode_l){
@@ -149,6 +160,7 @@ void * handleConnection(void * socket_desc) {
                 crearMulta(sc, partido, t);
                 break;
             case 2:
+                listarRegistrosSuspender(sc, partido);
                 break;
             case 3:
                 break;
@@ -165,49 +177,141 @@ void * handleConnection(void * socket_desc) {
     return 0;
 }
 
-int crearMulta(int sc, char *partido, char *mensaje) {
+void listarRegistrosSuspender(int sc, char *partido) {
+    FILE * ticket_ptr = NULL;
 
-    FILE * multa_ptr = NULL;
+    char fileName[256], line[256];
 
-    char fileName[100] = "/home/gonza/Desktop/TP3/ejercicio4/output/";
-    char line[256] ="ASD"; 
+    snprintf(fileName, sizeof(fileName), "%s%s", outdir, partido);
 
-    strcat(fileName, partido);
+    ticket_ptr = fopen(fileName, READ);
 
-    multa_ptr = fopen(fileName, READ_WRITE);
-
-    if (multa_ptr == NULL) {
+    if (ticket_ptr == NULL) {
         write(sc, NOT_OK, strlen(NOT_OK));
+        return;
     }
 
-    char * patente, *monto;
+    char *amount, *fines, *p, buffer[256];
+    int read_size, written_size;
+    long l_amount, l_fines;
 
-    patente = strtok_r(mensaje, " ", &monto);
+    while (fgets(line, sizeof(line), ticket_ptr) != NULL) {        
 
-    while (fgets(line, sizeof(line), multa_ptr) != NULL) {        
-        
-        if(strncmp(line, patente, strlen(patente)) == 0) {
+        strcpy(buffer, line);
+
+        strtok_r(buffer, TOKEN, &fines);
+        strtok_r(NULL, TOKEN, &fines);
+
+        l_fines = strtol(fines, &p, 10);
+
+        amount = strrchr(line, TOKEN_I);
+        amount++;
+
+        l_amount = strtol(amount, &p, 10);
+
+        if (l_amount > MAX_TOTAL_AMOUNT || l_fines > MAX_AMOUNT_FINES) {
+            written_size = write(sc, line, strlen(line));
+        }
+    }
+
+    written_size = write(sc, DONE, strlen(DONE));
+
+    fclose(ticket_ptr);
+
+    return;
+}
+
+void crearMulta(int sc, char *partido, char *message) {
+
+    FILE * ticket_ptr = NULL;
+
+    char fileName[256], line[256];
+
+    snprintf(fileName, sizeof(fileName), "%s%s", outdir, partido);
+
+    ticket_ptr = fopen(fileName, READ_WRITE);
+
+    if (ticket_ptr == NULL) {
+        ticket_ptr = fopen(fileName, WRITE);
+    }
+
+    if (ticket_ptr == NULL) {
+        write(sc, NOT_OK, strlen(NOT_OK));
+        return;
+    }
+
+    char * plate, *amount, *amount_line, titular[100], *p, *fines;
+    int result = -1, read_size, written_size;
+    long l_amount, l_amount_line, l_fines;
+
+    plate = strtok_r(message, TOKEN, &amount);
+
+    while (fgets(line, sizeof(line), ticket_ptr) != NULL) {        
+
+        if((result = strncmp(line, plate, strlen(plate))) == 0) {
             break;
         }
-
     }
 
-    printf("LINE %s\n", line);
+    if (!result) {
+        
+        l_amount = strtol(amount, &p, 10);
 
-    fclose(multa_ptr);
+        strtok_r(line, TOKEN, &fines);
+        strtok_r(NULL, TOKEN, &fines);
 
+        l_fines = strtol(fines, &p, 10);
+
+        amount_line = strrchr(line, TOKEN_I);
+        amount_line++;
+        
+        l_amount_line = strtol(amount_line, &p, 10);
+
+
+        l_fines++;
+        l_amount_line += l_amount;
+
+        
+
+    } else {
+        write(sc, TITULAR, strlen(TITULAR));
+
+        read_size = read(sc, titular, sizeof(titular));
+        
+        if (!read_size) {
+            return;
+        }
+
+        titular[read_size] = '\0';
+
+        snprintf(line, sizeof(line), "%s,%s,%s,%s%s", plate, titular, "1", amount, "\n");
+
+        written_size = fwrite(line, 1, strlen(line), ticket_ptr);
+
+        if (written_size > 0) {
+            write(sc, OK, strlen(OK));
+        } else {
+            write(sc, NOT_OK, strlen(NOT_OK));
+        }
+    }
+
+    fclose(ticket_ptr);
+
+    return;
 }
 
 void printHelp() {
 
     printf("\n\nBienvenido al servidor del sistema de multas de la Provincia de Buenos Aires!\n\n\n"
-            "Este server va a escuchar peticiones de los clientes en el puerto indicado en el archivo de constantes 'constants.c'.\n"
+            "Este server va a escuchar peticiones de los clientes en el puerto indicado en el archivo de constantes 'constants.h'.\n"
             "\nLas operaciones disponibles son:\n"
             "\t\t1. Ingresar nueva multa.\n"
             "\t\t2. Listar registros a suspender.\n"
             "\t\t3. Cancelar multas.\n"
             "\t\t4. Buscar por patente.\n"
             "\t\t5. Ver monto total de infractores.\n\n"
+            "Los datos de todas las multas ingresadas seran guardados dentro de la carpeta 'data' en un archivo de texto\n"
+            "con el nombre del partido correspondiente.\n\n"
             "Para ejecutar el server, simplemente ingrese './server'\n\n");
 }
 

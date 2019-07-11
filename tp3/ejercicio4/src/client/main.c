@@ -160,7 +160,7 @@ int crearMulta(int sd) {
 
     ingresarMonto(monto);
 
-    snprintf(buffer, sizeof(buffer), "%s %s %s", "1", patente, monto);
+    snprintf(buffer, sizeof(buffer), "%s,%s,%s", "1", patente, monto);
 
     written_size = write(sd, buffer, strlen(buffer));
 
@@ -172,22 +172,31 @@ int crearMulta(int sd) {
         return 1;
     }
 
+    memset(buffer, 0, sizeof(buffer));
     read_size = read(sd, buffer, sizeof(buffer));
     buffer[read_size] = '\0';
 
-    if (buffer == TITULAR) {
-        printf("La patente no existe en la base de datos del partido.\n"
-                "Ingrese el nombre del titular para poder darla de alta:\n\t");
+    if (strncmp(buffer, TITULAR, strlen(TITULAR)) == 0) {
+        printf(CLS);
+        printf("La patente no existe en la base de datos del partido.\n");
 
-        fgets(titular, sizeof(titular), stdin);
-        titular[strcspn(titular, "\n")] = 0;
+        do {
+            printf(CLS);
+            printf("Ingrese el nombre del titular para poder darla de alta: ");
+            
+            fgets(titular, sizeof(titular), stdin);
+            titular[strcspn(titular, "\n")] = 0;
+            
+        } while (!strlen(titular));
 
         written_size = write(sd, titular, strlen(titular));
 
         if (!written_size > 0) {
-            printf("No se pudo enviar la informacion al server.\n");
+            printf("\nNo se pudo enviar la informacion al server.\n");
+            
             printf("\n\nPresione 'Enter' para continuar.");
             getchar();
+            
             return 1;
         }
 
@@ -195,24 +204,85 @@ int crearMulta(int sd) {
         read_size = read(sd, buffer, sizeof(buffer));
     } 
 
-    if (buffer == OK) {
+    printf(CLS);
+
+    if (strncmp(buffer, OK, strlen(OK)) == 0) {
         printf("La multa fue dada de alta exitosamente!\n"
-                "Utilice la opcion 'Buscar por patente' del menu principal\n"
+                "\nUtilice la opcion 'Buscar por patente' del menu principal "
                 "para verificar la actualizacion de los datos.\n");
-        printf("\n\nPresione 'Enter' para continuar.");
-        getchar();
     } else {
-        printf("La multa no se pudo dar de alta correctamente por error en el server.\n");
-        printf("\n\nPresione 'Enter' para continuar.");
-        getchar();
+        printf("\nLa multa no se pudo dar de alta correctamente por error en el server.\n");
     }
+
+    printf("\n\nPresione 'Enter' para continuar.");
+    getchar();
 
     return 0;
 }
 
 int listarRegistrosSuspender(int sd) {
 
-    write(sd, "2", 2);
+    int read_size, written_size, flag = 0;
+    char buffer[256], *token;
+
+    written_size = write(sd, "2", 2);
+
+    if (!written_size > 0) {
+        printf("\nNo se pudo enviar la informacion al server.\n");
+        
+        printf("\n\nPresione 'Enter' para continuar.");
+        getchar();
+        
+        return 1;
+    }
+
+    printf(CLS);
+
+    read_size = read(sd, buffer, sizeof(buffer));
+
+    if(strncmp(buffer, NOT_OK, strlen(NOT_OK)) == 0) {
+        printf("No hay informacion a consultar disponible o hubo un error en el servidor al realizar la consulta.\n");
+        
+        printf("\n\nPresione 'Enter' para continuar.");
+        getchar();
+
+        return 1;
+    }
+
+    while (strncmp(buffer, DONE, strlen(DONE)) != 0) {
+        flag = 1;
+
+        buffer[read_size] = '\0';
+
+        token = strtok(buffer, "\n");
+   
+        while (token != NULL) {
+            
+            if(strncmp(token, DONE, strlen(DONE)) == 0) 
+                break;
+
+            printf("%s\n", token);
+
+            token = strtok(NULL, "\n");
+        }
+
+        if(strncmp(token, DONE, strlen(DONE)) == 0) 
+            break;
+
+        memset(buffer, 0, sizeof(buffer));
+        read_size = read(sd, buffer, sizeof(buffer));
+    }
+
+    if (!flag) {
+        printf("No hay registros que cumplan con las condiciones de suspension:\n\n"
+                "\t- Monto total mayor a '$%d'\n"
+                "\t- Cantidad multas mayor a '%d'", MAX_TOTAL_AMOUNT, MAX_AMOUNT_FINES);
+    }
+
+    printf("\n\n\nPresione 'Enter' para continuar.");
+    getchar();
+
+    return 0;
 }
 
 void ingresarMonto(char * monto) {
@@ -222,7 +292,7 @@ void ingresarMonto(char * monto) {
 
     while (!valido) {
         printf(CLS);
-        printf("\nIngrese el monto a pagar de la multa:\t");
+        printf("Ingrese el monto a pagar de la multa:\t");
         
         fgets(monto, sizeof(monto), stdin);
         monto[strcspn(monto, "\n")] = 0;
@@ -255,7 +325,7 @@ int ingresarPatente(char * patente) {
 
     do {
         printf(CLS);
-        printf("\nIngrese la patente a la que desea cargarle la multa:\t");
+        printf("Ingrese la patente a la que desea cargarle la multa:\t");
 
         //Si hago sizeof(patente) me trae el tamanio del puntero = 8
         fgets(patente, 20, stdin);
@@ -278,7 +348,7 @@ int ingresarPatente(char * patente) {
 void printMenu() {
 
     printf(CLS);
-    printf("\nSeleccione una operacion:\n\n"
+    printf("Seleccione una operacion:\n\n"
             "\t\t1. Ingresar nueva multa.\n"
             "\t\t2. Listar registros a suspender.\n"
             "\t\t3. Cancelar multas.\n"
@@ -289,7 +359,19 @@ void printMenu() {
 
 void printHelp() {
 
-    printf("Bienvenido al CLIENTE\n\n\n\n\n");
+    printf("\n\nBienvenido al sistema de multas de la provincia de Buenos Aires!\n\n\n"
+            "Este cliente se comunicara con el servidor central de multas y le permitira\n"
+            "realizar las siguientes operaciones:\n\n"
+            "\t\t1. Ingresar nueva multa.\n"
+            "\t\t2. Listar registros a suspender.\n"
+            "\t\t3. Cancelar multas.\n"
+            "\t\t4. Buscar por patente.\n"
+            "\t\t5. Ver monto total de infractores.\n\n"
+            "Para poder ejecutar el cliente, debera proporcionar el partido de la provincia\n"
+            "al que pertenece y el nombre (o la ip) del host donde este corriendo el server.\n"
+            "\nEjemplos de llamada:\n\n"
+            "\t./client localhost 'San Justo'\n"
+            "\t./client 127.0.0.1 'San Justo'\n\n");
 }
 
 /* EOF */
