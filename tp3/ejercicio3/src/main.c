@@ -7,7 +7,6 @@ Integrantes:
     Cabrera Gonzalo	DNI 37350600
     Facal Ernesto 	DNI 38983722
     Marson Tomás	DNI 40808276
-    Viescas Julián	DNI 40258471
 
 Número de entrega: primera reentrega.
 */
@@ -191,7 +190,7 @@ FILE * openFile(int fileToCreate){
     return file_ptr;
 }
 
-void printHelp() {
+void printHelp(){
 
     printf("\n\nBienvenido al sistema centralizado de multas de la provincia de Buenos Aires.\n\n"
             "Este sistema registrara toda la informacion recibida de las camaras de velocidad distribuidas\n"
@@ -212,4 +211,4 @@ void printHelp() {
             "\t\t./ejercicio3 \"/home/user/FIFO\"\n\n\n");
 }
 
-/* EOF */
+//EOF

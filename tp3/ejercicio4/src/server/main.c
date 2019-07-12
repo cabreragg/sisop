@@ -7,7 +7,6 @@ Integrantes:
     Cabrera Gonzalo	DNI 37350600
     Facal Ernesto 	DNI 38983722
     Marson Tomás	DNI 40808276
-    Viescas Julián	DNI 40258471
 
 Número de entrega: primera reentrega.
 */
