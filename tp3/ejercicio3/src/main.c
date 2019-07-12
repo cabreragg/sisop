@@ -190,7 +190,7 @@ FILE * openFile(int fileToCreate){
     return file_ptr;
 }
 
-void printHelp(){
+void printHelp() {
 
     printf("\n\nBienvenido al sistema centralizado de multas de la provincia de Buenos Aires.\n\n"
             "Este sistema registrara toda la informacion recibida de las camaras de velocidad distribuidas\n"
@@ -211,4 +211,4 @@ void printHelp(){
             "\t\t./ejercicio3 \"/home/user/FIFO\"\n\n\n");
 }
 
-//EOF
+/* EOF */
