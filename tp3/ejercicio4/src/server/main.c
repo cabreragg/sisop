@@ -8,7 +8,7 @@ Integrantes:
     Facal Ernesto 	DNI 38983722
     Marson Tomás	DNI 40808276
 
-Número de entrega: primera reentrega.
+Número de entrega: segunda reentrega.
 */
 
 #define _XOPEN_SOURCE 600
@@ -21,21 +21,31 @@ Número de entrega: primera reentrega.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
+#include <sys/signal.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include "../constants.h"
 
-void printHelp();
 void * handleConnection(void *);
+void closeConnection(int);
+void printHelp();
 void crearMulta(int, char *, char *);
 void listarRegistrosSuspender(int, char *);
+void borrarMulta(int, char *, char *);
+void buscarPatente(int, char *, char *);
+void listarMontoTotal(int, char *);
 
 char outdir[256];
+pthread_rwlock_t data_file, tmp_file;
 
 int main(int argc, char *argv[]) {
+
+    signal(SIGINT, closeConnection);
+    signal(SIGPIPE, closeConnection);
+    signal(SIGSEGV, closeConnection);
 
     int c = getopt(argc, argv, "hH");
     
@@ -96,6 +106,9 @@ int main(int argc, char *argv[]) {
 
     client_len = sizeof((struct sockaddr *) &client);
 
+    pthread_rwlock_init(&data_file, NULL);
+    pthread_rwlock_init(&tmp_file, NULL);
+
     while (sc = accept(se, &client, &client_len)) {
         if (sc < 0) {
             printf("Error al intentar aceptar la conexion: '%s'\n",strerror(errno));
@@ -106,7 +119,7 @@ int main(int argc, char *argv[]) {
 
         printf("Conexion establecida con el cliente '%s'.\n", hostname);
          
-        if (pthread_create(&thread_id[cant_threads], NULL, handleConnection, (void*)&sc) < 0) {
+        if (pthread_create(&thread_id[cant_threads], NULL, handleConnection, &sc) < 0) {
             printf("No se pudo crear el thread de conexion.\n");
             exit(1);
         }
@@ -115,16 +128,24 @@ int main(int argc, char *argv[]) {
 
         cant_threads++;
 
-        if (cant_threads == MAX_CONNECTIONS - 2) {
-            pthread_join(thread_id[cant_threads], NULL);
-            
-            cant_threads--;
+        if (cant_threads == MAX_CONNECTIONS) {
+
+            for(cant_threads; cant_threads >= MAX_CONNECTIONS; cant_threads--) {
+                pthread_join(thread_id[cant_threads-1], NULL);
+                cant_threads--;
+            }
         }
     }
 
     close(se);
 
     return 0;
+}
+
+void closeConnection(int sig) {
+
+    printf("Se recibio la SIGNAL: '%d'. Cerrando proceso y liberando recursos...\n", sig);
+    exit(0);
 }
 
 void * handleConnection(void * socket_desc) {
@@ -147,39 +168,165 @@ void * handleConnection(void * socket_desc) {
     
     memset(client_message, 0, sizeof(client_message));
 
-    while((read_size = read(sc, client_message, sizeof(client_message))) > 0) {
+    while ((read_size = read(sc, client_message, sizeof(client_message))) > 0) {
 
-        char *p, *t, *opcode;
+        char *p, *token, *opcode;
         
-        opcode = strtok_r(client_message, TOKEN, &t);
+        opcode = strtok_r(client_message, TOKEN, &token);
         long opcode_l = strtol(opcode, &p, 10);
         
-        switch(opcode_l){
+        switch (opcode_l) {
             case 1:
-                crearMulta(sc, partido, t);
+                crearMulta(sc, partido, token);
                 break;
             case 2:
                 listarRegistrosSuspender(sc, partido);
                 break;
             case 3:
+                borrarMulta(sc, partido, token);
                 break;
             case 4:
+                buscarPatente(sc, partido, token);
                 break;
             case 5:
-                break;
-            case 6:
+                listarMontoTotal(sc, partido);
                 break;
         }
+
+        memset(client_message, 0, sizeof(client_message));
     }
 
     close(sc);
     return 0;
 }
 
-void listarRegistrosSuspender(int sc, char *partido) {
-    FILE * ticket_ptr = NULL;
+void crearMulta(int sc, char *partido, char *message) {
 
+    FILE * ticket_ptr = NULL, *tmp_ptr = NULL;
+    char fileName[256], tmpName[256], line[256], new_line[256];
+    char * plate, *amount, *amount_line, *holder, titular[100], *p, *fines;
+    int result = -1, read_size, written_size, pos = 0, pos2 = 0;
+    long l_amount, l_amount_line, l_fines;
+
+    snprintf(fileName, sizeof(fileName), "%s%s", outdir, partido);
+
+    ticket_ptr = fopen(fileName, READ_WRITE);
+
+    if (ticket_ptr == NULL) {
+        ticket_ptr = fopen(fileName, WRITE);
+    }
+
+    if (ticket_ptr == NULL) {
+        write(sc, NOT_OK, strlen(NOT_OK));
+        return;
+    }
+
+    plate = strtok_r(message, TOKEN, &amount);
+
+    pthread_rwlock_rdlock(&data_file);
+
+    while (fgets(line, sizeof(line), ticket_ptr) != NULL) {        
+
+        if ((result = strncmp(line, plate, strlen(plate))) == 0) {
+            break;
+        }
+
+        pos++;
+    }
+
+    pthread_rwlock_unlock(&data_file);
+
+    if (!result) {
+
+        l_amount = strtol(amount, &p, 10);
+
+        strtok_r(line, TOKEN, &p);
+        holder = strtok_r(NULL, TOKEN, &p);
+        fines = strtok_r(NULL, TOKEN, &p);
+        amount_line = strtok_r(NULL, TOKEN, &p);
+
+        l_fines = strtol(fines, &p, 10);        
+        l_amount_line = strtol(amount_line, &p, 10);
+
+        l_fines++;
+        l_amount_line += l_amount;
+
+        snprintf(new_line, sizeof(new_line), "%s,%s,%ld,%ld%s", plate, holder, l_fines, l_amount_line, "\n");
+
+        snprintf(tmpName, sizeof(tmpName), "%s%s", outdir, "temp");
+
+        pthread_rwlock_wrlock(&tmp_file);
+
+        tmp_ptr = fopen(tmpName, WRITE);
+
+        if (tmp_ptr == NULL) {
+            write(sc, NOT_OK, strlen(NOT_OK));
+            return;
+        }
+
+        fseek(ticket_ptr, 0l, SEEK_SET);
+
+        pthread_rwlock_rdlock(&data_file);
+
+        while (fgets(line, sizeof(line), ticket_ptr) != NULL) {
+
+            if (pos != pos2) {
+                written_size = fwrite(line, 1, strlen(line), tmp_ptr);
+            } else {
+                written_size = fwrite(new_line, 1, strlen(new_line), tmp_ptr);
+            }
+
+            pos2++;
+        }
+
+        pthread_rwlock_unlock(&tmp_file);
+        pthread_rwlock_unlock(&data_file);
+
+        fclose(ticket_ptr);
+        fclose(tmp_ptr);
+
+        remove(fileName);
+        rename(tmpName, fileName);
+
+        write(sc, OK, strlen(OK));
+    } else {
+        write(sc, TITULAR, strlen(TITULAR));
+
+        read_size = read(sc, titular, sizeof(titular));
+        
+        if (!read_size) {
+            return;
+        }
+
+        titular[read_size] = '\0';
+
+        snprintf(line, sizeof(line), "%s,%s,%s,%s%s", plate, titular, "1", amount, "\n");
+
+        pthread_rwlock_wrlock(&data_file);
+
+        written_size = fwrite(line, 1, strlen(line), ticket_ptr);
+
+        pthread_rwlock_unlock(&data_file);
+
+        fclose(ticket_ptr);
+
+        if (written_size > 0) {
+            write(sc, OK, strlen(OK));
+        } else {
+            write(sc, NOT_OK, strlen(NOT_OK));
+        }
+    }
+
+    return;
+}
+
+void listarRegistrosSuspender(int sc, char *partido) {
+
+    FILE * ticket_ptr = NULL;
     char fileName[256], line[256];
+    char *amount, *fines, *p, buffer[256];
+    int read_size, written_size;
+    long l_amount, l_fines;
 
     snprintf(fileName, sizeof(fileName), "%s%s", outdir, partido);
 
@@ -190,9 +337,7 @@ void listarRegistrosSuspender(int sc, char *partido) {
         return;
     }
 
-    char *amount, *fines, *p, buffer[256];
-    int read_size, written_size;
-    long l_amount, l_fines;
+    pthread_rwlock_rdlock(&data_file);
 
     while (fgets(line, sizeof(line), ticket_ptr) != NULL) {        
 
@@ -213,6 +358,8 @@ void listarRegistrosSuspender(int sc, char *partido) {
         }
     }
 
+    pthread_rwlock_unlock(&data_file);
+
     written_size = write(sc, DONE, strlen(DONE));
 
     fclose(ticket_ptr);
@@ -220,81 +367,159 @@ void listarRegistrosSuspender(int sc, char *partido) {
     return;
 }
 
-void crearMulta(int sc, char *partido, char *message) {
+void borrarMulta(int sc, char *partido, char *message) {
 
-    FILE * ticket_ptr = NULL;
-
-    char fileName[256], line[256];
+    FILE * ticket_ptr = NULL, *tmp_ptr = NULL;
+    char fileName[256], tempName[256], line[256];
+    int pos = 0, pos2 = 0, result = -1, written_size;
 
     snprintf(fileName, sizeof(fileName), "%s%s", outdir, partido);
 
-    ticket_ptr = fopen(fileName, READ_WRITE);
-
-    if (ticket_ptr == NULL) {
-        ticket_ptr = fopen(fileName, WRITE);
-    }
+    ticket_ptr = fopen(fileName, READ);
 
     if (ticket_ptr == NULL) {
         write(sc, NOT_OK, strlen(NOT_OK));
         return;
     }
 
-    char * plate, *amount, *amount_line, titular[100], *p, *fines;
-    int result = -1, read_size, written_size;
-    long l_amount, l_amount_line, l_fines;
+    pthread_rwlock_rdlock(&data_file);
 
-    plate = strtok_r(message, TOKEN, &amount);
+    while (fgets(line, sizeof(line), ticket_ptr) != NULL) {
+
+        if ((result = strncmp(line, message, strlen(message))) == 0) {
+            break;
+        }
+
+        pos++;
+    }
+
+    pthread_rwlock_unlock(&data_file);
+
+    if (!result) {
+        snprintf(tempName, sizeof(tempName), "%s%s", outdir, "temp");
+
+        tmp_ptr = fopen(tempName, WRITE);
+
+        if (tmp_ptr == NULL) {
+            write(sc, NOT_OK, strlen(NOT_OK));
+            return;
+        }
+
+        fseek(ticket_ptr, 0l, SEEK_SET);
+
+        pthread_rwlock_rdlock(&data_file);
+        pthread_rwlock_wrlock(&tmp_file);
+
+        while (fgets(line, sizeof(line), ticket_ptr) != NULL) {
+
+            if (pos != pos2) {
+                written_size = fwrite(line, 1, strlen(line), tmp_ptr);
+            }
+
+            pos2++;
+        }
+
+        pthread_rwlock_unlock(&data_file);
+        pthread_rwlock_unlock(&tmp_file);
+
+        fclose(ticket_ptr);
+        fclose(tmp_ptr);
+
+        remove(fileName);
+        rename(tempName, fileName);
+
+        write(sc, OK, strlen(OK));
+    } else {
+        write(sc, NOT_FOUND, strlen(NOT_FOUND));
+        fclose(ticket_ptr);
+    }
+
+    return;
+}
+
+void buscarPatente(int sc, char *partido, char *message) {
+
+    FILE * ticket_ptr = NULL;
+    char fileName[256], line[256];
+    int result = -1;
+
+    snprintf(fileName, sizeof(fileName), "%s%s", outdir, partido);
+
+    ticket_ptr = fopen(fileName, READ);
+
+    if (ticket_ptr == NULL) {
+        write(sc, NOT_OK, strlen(NOT_OK));
+        return;
+    }
+
+    pthread_rwlock_rdlock(&data_file);
 
     while (fgets(line, sizeof(line), ticket_ptr) != NULL) {        
-
-        if((result = strncmp(line, plate, strlen(plate))) == 0) {
+        if ((result = strncmp(line, message, strlen(message))) == 0) {
             break;
         }
     }
 
-    if (!result) {
+    pthread_rwlock_unlock(&data_file);
+
+    fclose(ticket_ptr);
+
+    if (!result) {   
+        write(sc, line, strlen(line));
+        return;
+    }
+
+    write(sc, NOT_FOUND, strlen(NOT_FOUND));
+    return;
+}
+
+void listarMontoTotal(int sc, char *partido) {
+
+    FILE * ticket_ptr = NULL;
+    char fileName[256], line[256], *amount, *p, buffer[100];
+    long l_amount, total = 0;
+
+    snprintf(fileName, sizeof(fileName), "%s%s", outdir, partido);
+
+    ticket_ptr = fopen(fileName, READ);
+
+    if (ticket_ptr == NULL) {
+        write(sc, NOT_FOUND, strlen(NOT_FOUND));
+        return;
+    }
+
+    pthread_rwlock_rdlock(&data_file);
+
+    while (fgets(line, sizeof(line), ticket_ptr) != NULL) {        
+        
+        amount = strrchr(line, TOKEN_I);
+        amount++;
         
         l_amount = strtol(amount, &p, 10);
 
-        strtok_r(line, TOKEN, &fines);
-        strtok_r(NULL, TOKEN, &fines);
+        total += l_amount;
+    }
 
-        l_fines = strtol(fines, &p, 10);
+    pthread_rwlock_unlock(&data_file);
 
-        amount_line = strrchr(line, TOKEN_I);
-        amount_line++;
-        
-        l_amount_line = strtol(amount_line, &p, 10);
+    if (total <= 0) {
 
+        fseek(ticket_ptr, 0l, SEEK_END);
 
-        l_fines++;
-        l_amount_line += l_amount;
-
-        
-
-    } else {
-        write(sc, TITULAR, strlen(TITULAR));
-
-        read_size = read(sc, titular, sizeof(titular));
-        
-        if (!read_size) {
-            return;
-        }
-
-        titular[read_size] = '\0';
-
-        snprintf(line, sizeof(line), "%s,%s,%s,%s%s", plate, titular, "1", amount, "\n");
-
-        written_size = fwrite(line, 1, strlen(line), ticket_ptr);
-
-        if (written_size > 0) {
-            write(sc, OK, strlen(OK));
-        } else {
+        if (ftell(ticket_ptr)) {
             write(sc, NOT_OK, strlen(NOT_OK));
+        } else {
+            write(sc, NOT_FOUND, strlen(NOT_FOUND));
         }
+        
+        fclose(ticket_ptr);
+        return;
     }
 
     fclose(ticket_ptr);
+
+    snprintf(buffer, sizeof(buffer), "%s,%ld", partido, total);
+    write(sc, buffer, strlen(buffer));
 
     return;
 }

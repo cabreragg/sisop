@@ -8,7 +8,7 @@ Integrantes:
     Facal Ernesto 	DNI 38983722
     Marson Tomás	DNI 40808276
 
-Número de entrega: primera reentrega.
+Número de entrega: segunda reentrega.
 */
 
 #include <signal.h>

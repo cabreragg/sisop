@@ -12,4 +12,4 @@ server	:	server.o
 server.o	:	$(DIRS)/main.c	./src/constants.h
 			gcc	-g3	-c	$(DIRS)/main.c	-o	server.o
 clean	:	
-			rm -rf -f *.o server	client
+			rm -rf -f *.o server	client	./data/temp

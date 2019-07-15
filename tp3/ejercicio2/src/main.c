@@ -8,9 +8,8 @@ Integrantes:
     Facal Ernesto 	DNI 38983722
     Marson Tomás	DNI 40808276
 
-Número de entrega: primera reentrega.
+Número de entrega: segunda reentrega.
 */
-
 
 #include <dirent.h>
 #include <errno.h>
@@ -431,3 +430,5 @@ void printHelp() {
 			"\nEjemplo de llamada:\n\n"
     		"\t./ejercicio2 5 'home/user/directorio/archivos'\n\n");
 }
+
+/* EOF */

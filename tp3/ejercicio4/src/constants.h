@@ -12,6 +12,7 @@
 #define OK "0"
 #define NOT_OK "-1"
 #define DONE "2"
+#define NOT_FOUND "3"
 
 #define READ_WRITE "r+"
 #define WRITE "w+"

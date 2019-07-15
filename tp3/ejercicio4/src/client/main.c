@@ -8,7 +8,7 @@ Integrantes:
     Facal Ernesto 	DNI 38983722
     Marson Tomás	DNI 40808276
 
-Número de entrega: primera reentrega.
+Número de entrega: segunda reentrega.
 */
 
 #define _XOPEN_SOURCE 600
@@ -19,21 +19,31 @@ Número de entrega: primera reentrega.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
+#include <sys/signal.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include "../constants.h"
 
-void printHelp();
-void printMenu();
 void handleConnection(int);
+void closeConnection(int);
 int crearMulta(int);
 int listarRegistrosSuspender(int);
+int borrarMulta(int);
+int buscarPatente(int);
+int listarMontoTotal(int);
 int ingresarPatente(char *);
+void formatearImprimir(char *);
 void ingresarMonto(char *);
+void printMenu();
+void printHelp();
 
 int main(int argc, char *argv[]) {
+
+    signal(SIGINT, closeConnection);
+    signal(SIGPIPE, closeConnection);
+    signal(SIGSEGV, closeConnection);
 
     int c = getopt(argc, argv, "hH");
     
@@ -90,7 +100,7 @@ int main(int argc, char *argv[]) {
         break;
     }
     
-    if(addr == NULL) {
+    if (addr == NULL) {
         printf("No se pudo conectar con el servidor '%s'.\n", buffer);
         return 1;
     }
@@ -105,6 +115,15 @@ int main(int argc, char *argv[]) {
     freeaddrinfo(addrs);
 
     return 0;
+}
+
+void closeConnection(int sig) {
+
+    printf(CLS);
+    printf("Se recibio la SIGNAL: '%d'\nCerrando proceso y liberando recursos...\n\n\n"
+            "Presione 'Enter' para continuar.", sig);
+    getchar();
+    exit(0);
 }
 
 void handleConnection(int sd) {
@@ -134,16 +153,21 @@ void handleConnection(int sd) {
                 listarRegistrosSuspender(sd);
                 break;
             case 3:
+                borrarMulta(sd);
+                break;
             case 4:
+                buscarPatente(sd);
+                break;
             case 5:
-                continue;
+                listarMontoTotal(sd);
+                break;
             case 6:
                 break;
             default:
                 printf("La opcion ingresada es invalida.\n"
                         "Presione 'Enter' para continuar.");
                 getchar();
-                continue;
+                break;
         }
     } while (opcode != 6);
 }
@@ -174,9 +198,10 @@ int crearMulta(int sd) {
     memset(buffer, 0, sizeof(buffer));
     read_size = read(sd, buffer, sizeof(buffer));
     buffer[read_size] = '\0';
+    
+    printf(CLS);
 
     if (strncmp(buffer, TITULAR, strlen(TITULAR)) == 0) {
-        printf(CLS);
         printf("La patente no existe en la base de datos del partido.\n");
 
         do {
@@ -201,7 +226,7 @@ int crearMulta(int sd) {
 
         memset(buffer, 0, sizeof(buffer));
         read_size = read(sd, buffer, sizeof(buffer));
-    } 
+    }
 
     printf(CLS);
 
@@ -210,7 +235,7 @@ int crearMulta(int sd) {
                 "\nUtilice la opcion 'Buscar por patente' del menu principal "
                 "para verificar la actualizacion de los datos.\n");
     } else {
-        printf("\nLa multa no se pudo dar de alta correctamente por error en el server.\n");
+        printf("La multa no se pudo dar de alta correctamente por error en el server.\n");
     }
 
     printf("\n\nPresione 'Enter' para continuar.");
@@ -222,7 +247,7 @@ int crearMulta(int sd) {
 int listarRegistrosSuspender(int sd) {
 
     int read_size, written_size, flag = 0;
-    char buffer[256], *token;
+    char buffer[2000], *token, *t;
 
     written_size = write(sd, "2", 2);
 
@@ -239,8 +264,8 @@ int listarRegistrosSuspender(int sd) {
 
     read_size = read(sd, buffer, sizeof(buffer));
 
-    if(strncmp(buffer, NOT_OK, strlen(NOT_OK)) == 0) {
-        printf("No hay informacion a consultar disponible o hubo un error en el servidor al realizar la consulta.\n");
+    if (strncmp(buffer, NOT_OK, strlen(NOT_OK)) == 0) {
+        printf("No hay informacion disponible u ocurrio un error en el servidor al intentar procesar su peticion.\n");
         
         printf("\n\nPresione 'Enter' para continuar.");
         getchar();
@@ -253,19 +278,19 @@ int listarRegistrosSuspender(int sd) {
 
         buffer[read_size] = '\0';
 
-        token = strtok(buffer, "\n");
+        token = strtok_r(buffer, "\n", &t);
    
         while (token != NULL) {
             
-            if(strncmp(token, DONE, strlen(DONE)) == 0) 
+            if (strncmp(token, DONE, strlen(DONE)) == 0) 
                 break;
 
-            printf("%s\n", token);
+            formatearImprimir(token);
 
-            token = strtok(NULL, "\n");
+            token = strtok_r(NULL, "\n", &t);
         }
 
-        if(strncmp(token, DONE, strlen(DONE)) == 0) 
+        if (token != NULL && strncmp(token, DONE, strlen(DONE)) == 0) 
             break;
 
         memset(buffer, 0, sizeof(buffer));
@@ -284,6 +309,186 @@ int listarRegistrosSuspender(int sd) {
     return 0;
 }
 
+int borrarMulta(int sd) {
+
+    char patente[20], buffer[2000];
+    int read_size = 0, written_size = 0;
+    
+    if (ingresarPatente(patente)) {
+        return 1;
+    }
+
+    snprintf(buffer, sizeof(buffer), "%s,%s", "3", patente);
+
+    written_size = write(sd, buffer, strlen(buffer));
+
+    printf(CLS);
+
+    if (!written_size > 0) {
+        printf("No se pudo enviar la informacion al server.\n");
+        printf("\n\nPresione 'Enter' para continuar.");
+        getchar();
+
+        return 1;
+    }
+
+    memset(buffer, 0, sizeof(buffer));
+    read_size = read(sd, buffer, sizeof(buffer));
+
+    if (strncmp(buffer, NOT_OK, strlen(NOT_OK)) == 0) {
+        printf("No hay informacion disponible u ocurrio un error en el servidor al intentar procesar su peticion.\n");
+        
+        printf("\n\nPresione 'Enter' para continuar.");
+        getchar();
+
+        return 1;
+    }
+
+    if (strncmp(buffer, NOT_FOUND, strlen(NOT_FOUND)) == 0) {
+        printf("No se encontro registro de la patente ingresada.\n");
+        
+        printf("\n\nPresione 'Enter' para continuar.");
+        getchar();
+
+        return 1;
+    }
+
+    if (strncmp(buffer, OK, strlen(OK)) == 0) {
+        printf("Se realizo la operacion exitosamente!\n"
+                "\nUtilice la opcion 'Buscar por patente' del menu principal "
+                "para verificar la actualizacion de los datos.\n");
+    } else {
+        printf("Hubo un error al procesar la operacion solicitada.\n");
+    }
+
+    printf("\n\n\nPresione 'Enter' para continuar.");
+    getchar();
+
+    return 1;
+}
+
+int buscarPatente(int sd) {
+
+    char patente[20], buffer[2000];
+    int read_size = 0, written_size = 0;
+    
+    if (ingresarPatente(patente)) {
+        return 1;
+    }
+
+    snprintf(buffer, sizeof(buffer), "%s,%s", "4", patente);
+
+    written_size = write(sd, buffer, strlen(buffer));
+
+    printf(CLS);
+
+    if (!written_size > 0) {
+        printf("No se pudo enviar la informacion al server.\n");
+        printf("\n\nPresione 'Enter' para continuar.");
+        getchar();
+
+        return 1;
+    }
+
+    memset(buffer, 0, sizeof(buffer));
+    read_size = read(sd, buffer, sizeof(buffer));
+
+    if (strncmp(buffer, NOT_OK, strlen(NOT_OK)) == 0) {
+        printf("No hay informacion disponible u ocurrio un error en el servidor al intentar procesar su peticion.\n");
+        
+        printf("\n\nPresione 'Enter' para continuar.");
+        getchar();
+
+        return 1;
+    }
+
+    if (strncmp(buffer, NOT_FOUND, strlen(NOT_FOUND)) == 0) {
+        printf("No se encontro registro de la patente ingresada.\n");
+        
+        printf("\n\nPresione 'Enter' para continuar.");
+        getchar();
+
+        return 1;
+    }
+
+    if (strncmp(buffer, patente, strlen(patente)) == 0) {
+        printf("%-10s%-40s%-15s%s\n\n", "PATENTE", "TITULAR", "MONTO", "CANTIDAD MULTAS");
+        formatearImprimir(buffer);
+    } else {
+        printf("Hubo un error al procesar la consulta solicitada.");
+    }
+
+    printf("\n\n\nPresione 'Enter' para continuar.");
+    getchar();
+
+    return 1;
+}
+
+int listarMontoTotal(int sd) {
+
+    char buffer[128], *partido, *monto;
+    int read_size = 0, written_size = 0;
+
+    written_size = write(sd, "5", strlen("5"));
+
+    printf(CLS);
+
+    if (!written_size > 0) {
+        printf("No se pudo enviar la informacion al server.\n");
+        printf("\n\nPresione 'Enter' para continuar.");
+        getchar();
+
+        return 1;
+    }
+
+    memset(buffer, 0, sizeof(buffer));
+    read_size = read(sd, buffer, sizeof(buffer));
+
+    buffer[read_size] = '\0';
+
+    if (strncmp(buffer, NOT_FOUND, strlen(NOT_FOUND)) == 0) {
+        printf("No hay informacion disponible para la consulta realizada.\n");
+        
+        printf("\n\nPresione 'Enter' para continuar.");
+        getchar();
+
+        return 1;
+    }
+
+    if (strncmp(buffer, NOT_OK, strlen(NOT_OK)) == 0) {
+        printf("Ocurrio un error al intentar procesar su consulta.\n");
+        
+        printf("\n\nPresione 'Enter' para continuar.");
+        getchar();
+
+        return 1;
+    }
+
+    partido = strtok_r(buffer, TOKEN, &monto);
+
+    printf("El monto total de infractores para '%s' es de:\t $ %s\n", partido, monto);
+
+    printf("\n\nPresione 'Enter' para continuar.");
+    getchar();
+
+    return 1;
+}
+
+void formatearImprimir(char * linea) {
+
+    char *patente, *titular, *multas, *monto, *t;
+
+    linea[strcspn(linea, "\n")] = 0;
+
+    patente = strtok_r(linea, TOKEN, &t);
+    titular = strtok_r(NULL, TOKEN, &t);
+    multas = strtok_r(NULL, TOKEN, &t);
+    monto = strtok_r(NULL, TOKEN, &t);
+
+    printf("%-10s%-40s$ %-13s%s\n", patente, titular, monto, multas);
+}
+
+
 void ingresarMonto(char * monto) {
     
     char * p;
@@ -293,12 +498,12 @@ void ingresarMonto(char * monto) {
         printf(CLS);
         printf("Ingrese el monto a pagar de la multa:\t");
         
-        fgets(monto, sizeof(monto), stdin);
+        fgets(monto, 10, stdin);
         monto[strcspn(monto, "\n")] = 0;
 
         long monto_l = strtol(monto, &p, 10);
 
-        if (!(*p == '\n' || *p == '\0')) {
+        if (!(*p == '\n' || *p == '\0') || monto_l <= 0) {
             printf("\nEl monto ingresado '%s' es invalido.\n", monto);
             printf("\n\nPresione 'Enter' para continuar.");
             getchar();
@@ -324,7 +529,7 @@ int ingresarPatente(char * patente) {
 
     do {
         printf(CLS);
-        printf("Ingrese la patente a la que desea cargarle la multa:\t");
+        printf("Ingrese la patente con la que desea operar:\t");
 
         //Si hago sizeof(patente) me trae el tamanio del puntero = 8
         fgets(patente, 20, stdin);
@@ -339,7 +544,7 @@ int ingresarPatente(char * patente) {
             return 1;
         }
 
-    } while(reti != 0);
+    } while (reti != 0);
 
     return 0;
 }
